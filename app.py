@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from dotenv import load_dotenv
 
-from metrics import get_kpis, get_won_progress
+from metrics import get_kpis, get_won_progress, get_invoice_breakdown
 from match import add_manual_mapping
 from db import get_conn
 
@@ -83,6 +83,16 @@ HTML = """<!doctype html>
   .btn-link { background: none; border: 1px solid #d1d1d6; border-radius: 6px; color: #0071e3; cursor: pointer; font-size: 12px; padding: 2px 7px; margin-right: 4px; }
   .btn-link:hover { background: #0071e3; border-color: #0071e3; color: #fff; }
   .map-select { font-size: 12px; padding: 3px 6px; border: 1px solid #0071e3; border-radius: 6px; background: #fff; }
+  .card.clickable { cursor: pointer; transition: transform .1s, box-shadow .1s; }
+  .card.clickable:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,.06); border-color: #0071e3; }
+  dialog#detail-modal { border: none; border-radius: 12px; padding: 0; max-width: 880px; width: 90vw; max-height: 80vh; box-shadow: 0 10px 40px rgba(0,0,0,.2); }
+  dialog#detail-modal::backdrop { background: rgba(0,0,0,.4); }
+  .modal-head { display: flex; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid #eee; }
+  .modal-head h3 { font-size: 16px; margin: 0; flex: 1; }
+  .modal-head .total { color: #6b6b70; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .modal-close { background: none; border: none; cursor: pointer; font-size: 18px; color: #6b6b70; padding: 4px 8px; }
+  .modal-body { padding: 12px 20px 20px; overflow: auto; max-height: calc(80vh - 60px); }
+  .modal-body small { color: #999; }
 </style>
 </head>
 <body>
@@ -99,6 +109,14 @@ HTML = """<!doctype html>
 <div class="grid" id="kpis"><div class="loading">読み込み中...</div></div>
 <section><h2>受注案件の進捗（Repsona）</h2><div id="won-progress"></div></section>
 <section><h2>未マッチ受注案件（Repsonaに紐付いていない）</h2><div id="unmatched"></div></section>
+<dialog id="detail-modal">
+  <div class="modal-head">
+    <h3 id="modal-title"></h3>
+    <span class="total" id="modal-total"></span>
+    <button class="modal-close" onclick="closeDetail()">✕</button>
+  </div>
+  <div class="modal-body" id="modal-body"></div>
+</dialog>
 <script>
 const FY_LABELS = {};
 
@@ -139,8 +157,8 @@ async function load() {
   document.getElementById('kpis').innerHTML = `
     <div class="card"><div class="label">受注率</div><div class="value">${d.win_rate != null ? d.win_rate + '%' : '—'}</div><div class="sub">${d.won} 受注 / ${d.lost} 失注</div></div>
     <div class="card"><div class="label">見積中の案件</div><div class="value">${d.active}</div><div class="sub">パイプライン</div></div>
-    <div class="card"><div class="label">請求済み（受注案件）</div><div class="value" style="font-size:20px">${fmt(d.invoiced_amount)}</div><div class="sub">請求日が過去の案件</div></div>
-    <div class="card"><div class="label">未請求（受注案件）</div><div class="value" style="font-size:20px;color:#ff9500">${fmt(d.un_invoiced_amount)}</div><div class="sub">これから請求する金額</div></div>
+    <div class="card clickable" onclick="openDetail('invoiced')"><div class="label">請求済み（受注案件）</div><div class="value" style="font-size:20px">${fmt(d.invoiced_amount)}</div><div class="sub">請求日が過去の案件 →</div></div>
+    <div class="card clickable" onclick="openDetail('un_invoiced')"><div class="label">未請求（受注案件）</div><div class="value" style="font-size:20px;color:#ff9500">${fmt(d.un_invoiced_amount)}</div><div class="sub">これから請求する金額 →</div></div>
     <div class="card"><div class="label">遅延タスク（Repsona）</div><div class="value">${d.overdue_tasks_total}</div><div class="sub">全プロジェクト合計</div></div>
   `;
 
@@ -210,6 +228,39 @@ async function load() {
     unmatchedEl.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   }
 }
+async function openDetail(kind) {
+  const fy = document.getElementById('fy-select').value;
+  const url = fy
+    ? `/api/invoice-breakdown?kind=${kind}&fiscal_year=${fy}`
+    : `/api/invoice-breakdown?kind=${kind}`;
+  const r = await fetch(url);
+  const items = await r.json();
+  const title = kind === 'invoiced' ? '請求済み 受注案件' : '未請求 受注案件';
+  document.getElementById('modal-title').textContent = title + (fy ? `（${fy}年度）` : '');
+  const total = items.reduce((s, i) => s + (i.total_amount || 0), 0);
+  document.getElementById('modal-total').textContent = `${items.length}件 / 計 ${fmt(total)}`;
+
+  const body = document.getElementById('modal-body');
+  if (!items.length) {
+    body.innerHTML = '<div class="empty">該当なし</div>';
+  } else {
+    const head = '<tr><th>見積日</th><th>案件名</th><th>クライアント</th><th>金額</th><th>請求日</th></tr>';
+    const rows = items.map(i => `<tr>
+      <td>${i.estimate_date || ''}</td>
+      <td>${i.name}</td>
+      <td>${i.client_name || ''}</td>
+      <td class="amount">${fmt(i.total_amount)}</td>
+      <td><small>${(i.invoice_dates || []).join(', ') || '—'}</small></td>
+    </tr>`).join('');
+    body.innerHTML = `<table><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+  }
+  document.getElementById('detail-modal').showModal();
+}
+
+function closeDetail() {
+  document.getElementById('detail-modal').close();
+}
+
 async function excludeUnmatched(id, btn) {
   btn.disabled = true;
   await fetch(`/api/unmatched/${id}/exclude`, {method: 'POST'});
@@ -274,6 +325,15 @@ def api_progress(
     user: str = Depends(auth),
 ) -> list:
     return get_won_progress()
+
+
+@app.get("/api/invoice-breakdown")
+def api_invoice_breakdown(
+    kind: str = Query(default="invoiced", pattern="^(invoiced|un_invoiced)$"),
+    fiscal_year: int | None = Query(default=None),
+    user: str = Depends(auth),
+) -> list:
+    return get_invoice_breakdown(fiscal_year=fiscal_year, kind=kind)
 
 
 @app.get("/api/repsona-groups")

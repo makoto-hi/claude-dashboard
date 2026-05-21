@@ -144,6 +144,57 @@ def get_kpis(fiscal_year: int | None = None) -> dict:
         conn.close()
 
 
+def get_invoice_breakdown(fiscal_year: int | None = None, kind: str = "invoiced") -> list[dict]:
+    """請求済み or 未請求 の受注案件詳細リストを返す。
+
+    kind: 'invoiced' = いずれかの請求日が過去 / 'un_invoiced' = それ以外。
+    """
+    if kind not in ("invoiced", "un_invoiced"):
+        raise ValueError("kind must be 'invoiced' or 'un_invoiced'")
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    won_in = ",".join(f"'{w}'" for w in WON_STATUSES)
+
+    if fiscal_year:
+        period_start, period_end = _fiscal_year_range(fiscal_year)
+        date_clause = "AND estimate_date >= ? AND estimate_date <= ? AND estimate_date IS NOT NULL"
+        date_params: tuple = (period_start, period_end)
+    else:
+        date_clause = ""
+        date_params = ()
+
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT id, name, client_name, total_amount, invoice_dates, estimate_date
+            FROM board_projects
+            WHERE order_status IN ({won_in}) {date_clause}
+            ORDER BY estimate_date DESC
+            """,
+            date_params,
+        ).fetchall()
+
+        result = []
+        for r in rows:
+            dates = json.loads(r["invoice_dates"] or "[]")
+            has_past = bool(dates and any(d <= today for d in dates))
+            want = (kind == "invoiced" and has_past) or (kind == "un_invoiced" and not has_past)
+            if not want:
+                continue
+            result.append({
+                "id": r["id"],
+                "name": r["name"],
+                "client_name": r["client_name"],
+                "total_amount": r["total_amount"],
+                "invoice_dates": dates,
+                "estimate_date": r["estimate_date"],
+            })
+        return result
+    finally:
+        conn.close()
+
+
 def get_won_progress() -> list[dict]:
     """受注済み案件の進捗リスト（Repsona 親タスクグループ × board 案件の突合）。
 
