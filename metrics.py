@@ -73,7 +73,13 @@ def get_kpis(fiscal_year: int | None = None) -> dict:
         ).fetchone()["s"]
 
         # 未マッチ案件（受注済みなのにRepsonaと紐付いていない）
-        unmatched = conn.execute(
+        # Repsonaグループ名が name または client_name に含まれていれば自動マッチとみなす
+        group_names = [
+            (r["group_name"] or "").lower()
+            for r in conn.execute("SELECT group_name FROM repsona_task_groups").fetchall()
+        ]
+        group_names = [g for g in group_names if g]
+        raw_unmatched = conn.execute(
             f"""
             SELECT bp.id, bp.name, bp.client_name, bp.estimate_date
             FROM board_projects bp
@@ -83,10 +89,18 @@ def get_kpis(fiscal_year: int | None = None) -> dict:
               AND COALESCE(bp.is_excluded, 0) = 0
               {date_clause}
             ORDER BY bp.updated_at DESC
-            LIMIT 50
             """,
             date_params,
         ).fetchall()
+        unmatched = []
+        for r in raw_unmatched:
+            name_l = (r["name"] or "").lower()
+            client_l = (r["client_name"] or "").lower()
+            if any(g in name_l or g in client_l for g in group_names):
+                continue  # 自動マッチ済みなのでスキップ
+            unmatched.append(r)
+            if len(unmatched) >= 50:
+                break
 
         # 請求済み / 未請求 金額（受注済み案件のみ）
         today = datetime.now(timezone.utc).date().isoformat()
