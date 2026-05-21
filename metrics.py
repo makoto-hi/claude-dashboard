@@ -1,8 +1,7 @@
 """DBから KPI を集計する。"""
 from __future__ import annotations
 import json
-import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from db import get_conn
 from detect import WON_STATUSES
 
@@ -33,11 +32,10 @@ def _fiscal_year_range(year: int) -> tuple[str, str]:
 
 
 def get_kpis(fiscal_year: int | None = None) -> dict:
-    """受注率・滞留案件・遅延タスクのサマリを返す。
+    """受注率・請求状況・未マッチ・遅延タスクのサマリを返す。
 
     fiscal_year: 年度（例: 2026 → 2026/03/01〜2027/02/28）。None で全期間。
     """
-    stale_days = int(os.environ.get("STALE_DAYS", "14"))
     conn = get_conn()
 
     # 期フィルター条件（estimate_date ベース）
@@ -68,21 +66,6 @@ def get_kpis(fiscal_year: int | None = None) -> dict:
                 active += r["c"]
         denom = won + lost
         win_rate = (won / denom * 100) if denom else None
-
-        # 滞留案件（見積中で updated_at が古いもの）
-        threshold = (datetime.now(timezone.utc) - timedelta(days=stale_days)).isoformat()
-        stale = conn.execute(
-            f"""
-            SELECT id, name, client_name, total_amount, updated_at, order_status, estimate_date
-            FROM board_projects
-            WHERE updated_at < ? {date_clause}
-              AND order_status NOT IN ({won_in})
-              AND order_status NOT IN ({lost_in})
-            ORDER BY updated_at ASC
-            LIMIT 50
-            """,
-            (threshold, *date_params),
-        ).fetchall()
 
         # Repsona遅延タスク合計（期に関わらず全プロジェクト）
         overdue = conn.execute(
@@ -138,8 +121,6 @@ def get_kpis(fiscal_year: int | None = None) -> dict:
             "won": won,
             "lost": lost,
             "active": active,
-            "stale_projects": [dict(r) for r in stale],
-            "stale_days_threshold": stale_days,
             "overdue_tasks_total": overdue,
             "unmatched_won": [dict(r) for r in unmatched],
             "invoiced_amount": invoiced_amount,

@@ -95,7 +95,6 @@ HTML = """<!doctype html>
 </div>
 <div class="grid" id="kpis"><div class="loading">読み込み中...</div></div>
 <section><h2>受注案件の進捗（Repsona）</h2><div id="won-progress"></div></section>
-<section><h2>滞留案件（しばらく動きがない見積中）</h2><div id="stale"></div></section>
 <section><h2>未マッチ受注案件（Repsonaに紐付いていない）</h2><div id="unmatched"></div></section>
 <script>
 const FY_LABELS = {};
@@ -139,7 +138,6 @@ async function load() {
     <div class="card"><div class="label">見積中の案件</div><div class="value">${d.active}</div><div class="sub">パイプライン</div></div>
     <div class="card"><div class="label">請求済み（受注案件）</div><div class="value" style="font-size:20px">${fmt(d.invoiced_amount)}</div><div class="sub">請求日が過去の案件</div></div>
     <div class="card"><div class="label">未請求（受注案件）</div><div class="value" style="font-size:20px;color:#ff9500">${fmt(d.un_invoiced_amount)}</div><div class="sub">これから請求する金額</div></div>
-    <div class="card"><div class="label">滞留案件</div><div class="value">${d.stale_projects.length}</div><div class="sub">${d.stale_days_threshold}日以上動きなし</div></div>
     <div class="card"><div class="label">遅延タスク（Repsona）</div><div class="value">${d.overdue_tasks_total}</div><div class="sub">全プロジェクト合計</div></div>
   `;
 
@@ -154,14 +152,6 @@ async function load() {
     }).join('') + '</tr>').join('');
     el.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   };
-
-  renderTable('stale', d.stale_projects, [
-    {key: 'estimate_date', label: '見積日'},
-    {key: 'name', label: '案件名'},
-    {key: 'client_name', label: 'クライアント'},
-    {key: 'total_amount', label: '金額', fmt: fmt, cls: 'amount'},
-    {key: 'updated_at', label: '最終更新', fmt: v => v ? v.slice(0,10) : ''},
-  ]);
 
   // 受注案件の進捗（並列で取得済み）
   const progress = await pRes.json();
