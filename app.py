@@ -80,6 +80,9 @@ HTML = """<!doctype html>
   .badge-ng   { color: #ff3b30; font-weight: 600; font-size: 12px; }
   .btn-del { background: none; border: 1px solid #d1d1d6; border-radius: 6px; color: #999; cursor: pointer; font-size: 12px; padding: 2px 7px; }
   .btn-del:hover { background: #ff3b30; border-color: #ff3b30; color: #fff; }
+  .btn-link { background: none; border: 1px solid #d1d1d6; border-radius: 6px; color: #0071e3; cursor: pointer; font-size: 12px; padding: 2px 7px; margin-right: 4px; }
+  .btn-link:hover { background: #0071e3; border-color: #0071e3; color: #fff; }
+  .map-select { font-size: 12px; padding: 3px 6px; border: 1px solid #0071e3; border-radius: 6px; background: #fff; }
 </style>
 </head>
 <body>
@@ -194,12 +197,15 @@ async function load() {
   if (!d.unmatched_won.length) {
     unmatchedEl.innerHTML = '<div class="empty">該当なし</div>';
   } else {
-    const head = '<tr><th>見積日</th><th>案件名</th><th>クライアント</th><th></th></tr>';
+    const head = '<tr><th>見積日</th><th>案件名</th><th>クライアント</th><th style="width:170px"></th></tr>';
     const body = d.unmatched_won.map(row => `<tr>
       <td>${row.estimate_date || ''}</td>
       <td>${row.name}</td>
       <td>${row.client_name || ''}</td>
-      <td><button class="btn-del" onclick="excludeUnmatched(${row.id}, this)" title="リストから除外">✕</button></td>
+      <td>
+        <button class="btn-link" onclick="linkUnmatched(${row.id}, this)" title="Repsonaグループに紐付ける">🔗 紐付け</button>
+        <button class="btn-del" onclick="excludeUnmatched(${row.id}, this)" title="リストから除外">✕</button>
+      </td>
     </tr>`).join('');
     unmatchedEl.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   }
@@ -208,6 +214,39 @@ async function excludeUnmatched(id, btn) {
   btn.disabled = true;
   await fetch(`/api/unmatched/${id}/exclude`, {method: 'POST'});
   btn.closest('tr').remove();
+}
+
+let _groupsCache = null;
+async function linkUnmatched(id, btn) {
+  if (!_groupsCache) {
+    const r = await fetch('/api/repsona-groups');
+    _groupsCache = await r.json();
+  }
+  if (!_groupsCache.length) {
+    alert('Repsona グループがまだありません。先に sync を実行してください。');
+    return;
+  }
+  const cell = btn.closest('td');
+  const options = _groupsCache.map(g => `<option value="${g}">${g}</option>`).join('');
+  cell.innerHTML = `
+    <select class="map-select" onchange="submitMapping(${id}, this.value, this)">
+      <option value="">グループを選択...</option>
+      ${options}
+    </select>
+    <button class="btn-del" onclick="load()" title="キャンセル">×</button>
+  `;
+}
+
+async function submitMapping(id, groupName, select) {
+  if (!groupName) return;
+  select.disabled = true;
+  await fetch('/api/mapping', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({board_id: id, repsona_id: groupName}),
+  });
+  // 紐付け後、ダッシュボード全体をリロードして進捗にも反映
+  load();
 }
 load();
 </script>
@@ -235,6 +274,19 @@ def api_progress(
     user: str = Depends(auth),
 ) -> list:
     return get_won_progress()
+
+
+@app.get("/api/repsona-groups")
+def api_repsona_groups(user: str = Depends(auth)) -> list[str]:
+    """Repsona の親タスク名（= グループ）一覧。手動マッピング用。"""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT group_name FROM repsona_task_groups ORDER BY group_name"
+        ).fetchall()
+        return [r["group_name"] for r in rows]
+    finally:
+        conn.close()
 
 
 @app.post("/api/unmatched/{board_id}/exclude")

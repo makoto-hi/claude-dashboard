@@ -147,15 +147,25 @@ def get_won_progress() -> list[dict]:
             f"SELECT id, name, client_name, total_amount, estimate_date FROM board_projects WHERE order_status IN ({won_in})"
         ).fetchall()
 
+        # 手動マッピング: group_name -> {board_project_ids}
+        # 既存スキーマの repsona_project_id を group_name 格納用として再利用
+        manual_map: dict[str, set[int]] = {}
+        for m in conn.execute(
+            "SELECT board_project_id, repsona_project_id FROM project_mapping WHERE match_type = 'manual'"
+        ).fetchall():
+            manual_map.setdefault(m["repsona_project_id"], set()).add(m["board_project_id"])
+
         result = []
         for g in groups:
             gname = g["group_name"]
             gname_lower = gname.lower()
+            manual_ids = manual_map.get(gname, set())
 
-            # 案件名またはクライアント名に親タスク名が含まれる board 案件を抽出
+            # 案件名/クライアント名に親タスク名が含まれる、または手動紐付け済みの board 案件
             matched = [
                 p for p in board_won
-                if gname_lower in (p["name"] or "").lower()
+                if p["id"] in manual_ids
+                or gname_lower in (p["name"] or "").lower()
                 or gname_lower in (p["client_name"] or "").lower()
             ]
             total_amount = sum(p["total_amount"] or 0 for p in matched)
