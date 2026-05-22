@@ -84,6 +84,9 @@ def sync_repsona() -> int:
         now = _now_iso()
         now_ms = datetime.now(timezone.utc).timestamp() * 1000
 
+        # sync 開始時に一度だけ洗い替え（ループの中で消すと2件目以降が消える）
+        conn.execute("DELETE FROM repsona_task_groups")
+
         for p in client.iter_projects():
             pid_int = int(p["id"])
             pid = str(pid_int)
@@ -100,7 +103,11 @@ def sync_repsona() -> int:
 
                 for t in tasks:
                     if t.get("parent") is None:
-                        continue  # ヘッダータスク自体は集計対象外
+                        # ルート親タスク = グループ。子タスクが0でも行として残す
+                        gname = t.get("name") or "(無名)"
+                        if gname not in groups:
+                            groups[gname] = {"total": 0, "done": 0, "overdue": 0}
+                        continue
                     total += 1
                     status_id = t.get("status")
                     is_done = status_id in closed_ids
@@ -147,8 +154,7 @@ def sync_repsona() -> int:
             )
 
             # 親タスク単位の進捗を repsona_task_groups へ保存
-            # sync のたびに洗い替え
-            conn.execute("DELETE FROM repsona_task_groups")
+            # （DELETE はループ外で実施済み）
             for gname, g in groups.items():
                 conn.execute(
                     """
