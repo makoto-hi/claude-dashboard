@@ -102,3 +102,19 @@ def add_manual_mapping(board_id: int, repsona_id: str) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def promote_to_solo(board_id: int) -> None:
+    """board案件を単独グループとして受注案件の進捗に登録する。
+    Repsonaのいずれのグループにも属さず、独立した行として表示される。"""
+    conn = get_conn()
+    try:
+        conn.execute(
+            """INSERT OR REPLACE INTO project_mapping
+               (board_project_id, repsona_project_id, match_type, confidence, created_at)
+               VALUES (?, ?, 'manual_solo', 1.0, ?)""",
+            (board_id, f"__solo:{board_id}", _now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()

@@ -253,9 +253,35 @@ def get_won_progress() -> list[dict]:
                 "task_overdue":  t_over,
                 "actual_pct":   actual_pct,
                 "ideal_pct":    ideal_pct,
+                "is_solo":      False,
                 "board_projects": [
                     {"id": p["id"], "name": p["name"], "client_name": p["client_name"]}
                     for p in matched
+                ],
+            })
+
+        # 単独グループ（manual_solo）: 未マッチから「進捗に追加」されたboard案件
+        board_by_id = {p["id"]: p for p in board_won}
+        solo_rows = conn.execute(
+            "SELECT board_project_id FROM project_mapping WHERE match_type = 'manual_solo'"
+        ).fetchall()
+        for sr in solo_rows:
+            bp = board_by_id.get(sr["board_project_id"])
+            if not bp:
+                continue
+            amt = bp["total_amount"] or 0
+            result.append({
+                "group_name":    bp["name"],
+                "total_amount":  amt,
+                "budget_days":   round(amt / AVG_DAILY_RATE, 1) if amt else None,
+                "task_total":    0,
+                "task_done":     0,
+                "task_overdue":  0,
+                "actual_pct":    0,
+                "ideal_pct":     0,
+                "is_solo":       True,
+                "board_projects": [
+                    {"id": bp["id"], "name": bp["name"], "client_name": bp["client_name"]}
                 ],
             })
 

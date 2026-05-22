@@ -14,7 +14,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from dotenv import load_dotenv
 
 from metrics import get_kpis, get_won_progress, get_invoice_breakdown
-from match import add_manual_mapping
+from match import add_manual_mapping, promote_to_solo
 from db import get_conn
 
 load_dotenv()
@@ -82,7 +82,6 @@ HTML = """<!doctype html>
   .btn-del:hover { background: #ff3b30; border-color: #ff3b30; color: #fff; }
   .btn-link { background: none; border: 1px solid #d1d1d6; border-radius: 6px; color: #0071e3; cursor: pointer; font-size: 12px; padding: 2px 7px; margin-right: 4px; }
   .btn-link:hover { background: #0071e3; border-color: #0071e3; color: #fff; }
-  .map-select { font-size: 12px; padding: 3px 6px; border: 1px solid #0071e3; border-radius: 6px; background: #fff; }
   .card.clickable { cursor: pointer; transition: transform .1s, box-shadow .1s; }
   .card.clickable:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,.06); border-color: #0071e3; }
   dialog#detail-modal { border: none; border-radius: 12px; padding: 0; max-width: 880px; width: 90vw; max-height: 80vh; box-shadow: 0 10px 40px rgba(0,0,0,.2); }
@@ -198,8 +197,9 @@ async function load() {
       const budgetLabel = p.budget_days != null
         ? `${p.budget_days}人日<br><small style="color:#999">@¥68,000/日</small>`
         : '—';
+      const soloMark = p.is_solo ? ' <small style="color:#0071e3">(単独)</small>' : '';
       return `<tr>
-        <td><strong>${p.group_name}</strong><br><small style="color:#999">${boardNames}</small></td>
+        <td><strong>${p.group_name}${soloMark}</strong><br><small style="color:#999">${boardNames}</small></td>
         <td class="amount">${p.total_amount ? '¥' + p.total_amount.toLocaleString('ja-JP') : '—'}</td>
         <td class="amount">${budgetLabel}</td>
         <td>${bar}</td>
@@ -221,7 +221,7 @@ async function load() {
       <td>${row.name}</td>
       <td>${row.client_name || ''}</td>
       <td>
-        <button class="btn-link" onclick="linkUnmatched(${row.id}, this)" title="Repsonaグループに紐付ける">🔗 紐付け</button>
+        <button class="btn-link" onclick="promoteUnmatched(${row.id}, this)" title="受注案件の進捗に単独行として追加">📌 進捗に追加</button>
         <button class="btn-del" onclick="excludeUnmatched(${row.id}, this)" title="リストから除外">✕</button>
       </td>
     </tr>`).join('');
@@ -267,36 +267,9 @@ async function excludeUnmatched(id, btn) {
   btn.closest('tr').remove();
 }
 
-let _groupsCache = null;
-async function linkUnmatched(id, btn) {
-  if (!_groupsCache) {
-    const r = await fetch('/api/repsona-groups');
-    _groupsCache = await r.json();
-  }
-  if (!_groupsCache.length) {
-    alert('Repsona グループがまだありません。先に sync を実行してください。');
-    return;
-  }
-  const cell = btn.closest('td');
-  const options = _groupsCache.map(g => `<option value="${g}">${g}</option>`).join('');
-  cell.innerHTML = `
-    <select class="map-select" onchange="submitMapping(${id}, this.value, this)">
-      <option value="">グループを選択...</option>
-      ${options}
-    </select>
-    <button class="btn-del" onclick="load()" title="キャンセル">×</button>
-  `;
-}
-
-async function submitMapping(id, groupName, select) {
-  if (!groupName) return;
-  select.disabled = true;
-  await fetch('/api/mapping', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({board_id: id, repsona_id: groupName}),
-  });
-  // 紐付け後、ダッシュボード全体をリロードして進捗にも反映
+async function promoteUnmatched(id, btn) {
+  btn.disabled = true;
+  await fetch(`/api/unmatched/${id}/promote`, {method: 'POST'});
   load();
 }
 load();
@@ -347,6 +320,13 @@ def api_repsona_groups(user: str = Depends(auth)) -> list[str]:
         return [r["group_name"] for r in rows]
     finally:
         conn.close()
+
+
+@app.post("/api/unmatched/{board_id}/promote")
+def api_promote_unmatched(board_id: int, user: str = Depends(auth)) -> dict:
+    """未マッチ案件を単独グループとして進捗テーブルに追加。"""
+    promote_to_solo(board_id)
+    return {"ok": True}
 
 
 @app.post("/api/unmatched/{board_id}/exclude")
