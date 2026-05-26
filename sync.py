@@ -9,6 +9,10 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from db import get_conn, init_db
 from board_client import BoardClient
 from repsona_client import RepsonaClient
